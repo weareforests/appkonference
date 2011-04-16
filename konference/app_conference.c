@@ -26,6 +26,7 @@
  */
 
 #include "asterisk.h"
+#include "asterisk/manager.h"
 
 // SVN revision number, provided by make
 #ifndef REVISION
@@ -89,6 +90,61 @@ static int app_konferencecount_main(struct ast_channel* chan, void* data)
 	return res ;
 }
 
+static int conferencemute(struct mansession *s, const struct message *m, int mute)
+{
+	const char *confid = astman_get_header(m, "Conference");
+	char *userid = ast_strdupa(astman_get_header(m, "User"));
+	int userno;
+
+	if (ast_strlen_zero(confid)) {
+		astman_send_error(s, m, "Conference not specified");
+		return 0;
+	}
+
+	if (ast_strlen_zero(userid)) {
+		astman_send_error(s, m, "User number not specified");
+		return 0;
+	}
+
+	userno = strtoul(userid, &userid, 10);
+
+	if (*userid) {
+		astman_send_error(s, m, "Invalid user number");
+		return 0;
+	}
+
+    int res = 0;
+    if (mute)
+    {
+        res = mute_member( confid, userno );
+    }
+    else
+    {
+        res = unmute_member( confid, userno );
+    }
+
+    if (!res)
+    {
+		ast_log(LOG_WARNING, "(un)mute failed!\n");
+		return -1;
+    }
+
+	ast_log(LOG_NOTICE, "Requested to %smute conf %s user %d\n", mute ? "" : "un", confid, userno);
+
+	astman_send_ack(s, m, mute ? "User muted" : "User unmuted");
+	return 0;
+}
+
+static int action_conferencemute(struct mansession *s, const struct message *m)
+{
+	return conferencemute(s, m, 1);
+}
+
+static int action_conferenceunmute(struct mansession *s, const struct message *m)
+{
+	return conferencemute(s, m, 0);
+}
+
 static int unload_module( void )
 {
 	int res = 0;
@@ -98,6 +154,9 @@ static int unload_module( void )
 	ast_module_user_hangup_all();
 
 	unregister_conference_cli() ;
+
+	res |= ast_manager_unregister("ConferenceMute");
+	res |= ast_manager_unregister("ConferenceUnmute");
 
 	res |= ast_unregister_application( app ) ;
 	res |= ast_unregister_application( app2 ) ;
@@ -117,6 +176,11 @@ static int load_module( void )
 	init_conference() ;
 
 	register_conference_cli() ;
+
+	res |= ast_manager_register("ConferenceMute", EVENT_FLAG_CALL, 
+				    action_conferencemute, "Mute a Conference user");
+	res |= ast_manager_register("ConferenceUnmute", EVENT_FLAG_CALL, 
+				    action_conferenceunmute, "Unmute a Conference user");
 
 	res |= ast_register_application( app, app_konference_main, synopsis, descrip ) ;
 	res |= ast_register_application( app2, app_konferencecount_main, synopsis2, descrip2 ) ;
